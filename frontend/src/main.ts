@@ -2468,6 +2468,7 @@ let storedTheme: string | null = null;
 try { storedTheme = localStorage.getItem(THEME_STORAGE_KEY); } catch { /* Storage can be disabled. */ }
 if (storedTheme === 'light' || storedTheme === 'dark') document.documentElement.dataset.theme = storedTheme;
 async function initialize(): Promise<void> {
+  await ensureAccessPassword();
   profiles = await loadProfiles();
   applyLanguage(currentLanguage);
   element<HTMLElement>('app').hidden = false;
@@ -2490,6 +2491,7 @@ async function initialize(): Promise<void> {
 
 void initialize().catch(() => {
   // History initialization must never make the connection UI unavailable.
+  void ensureAccessPassword();
   profiles = loadCurrentProfiles();
   applyLanguage(currentLanguage);
   element<HTMLElement>('app').hidden = false;
