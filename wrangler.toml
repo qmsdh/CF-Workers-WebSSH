@@ -19,6 +19,10 @@ CONNECT_TIMEOUT_MS = "10000"
 name = "SSH_SESSIONS"
 class_name = "SSHSessionDO"
 
+[[kv_namespaces]]
+binding = "CONNECTIONS_KV"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["SSHSessionDO"]
