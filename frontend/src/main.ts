@@ -3,6 +3,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { historyKey, historyLabel, normalizeHistory, upsertHistoryIfNewer, type HistoryEntry } from './history';
 import { getHistoryPasswordKey } from './history-key';
+import { fetchRemoteProfiles, pushRemoteProfiles } from './kv-sync';
 import { decryptPasswordResult, encryptPassword, isEncryptedPassword } from './password-crypto';
 import { resolveConnectionControl, resolveConnectionPanel } from './ui-state';
 import { classifyHostKey, SSH_FINGERPRINT_RE, type HostKeyPrompt } from './host-key';
@@ -857,24 +858,39 @@ function readStoredArray(storageKey: string): StoredArray {
 
 async function loadProfilesWithoutLock(): Promise<SavedProfile[]> {
   const currentStorage = readStoredArray(PROFILE_STORAGE_KEY);
-  const current = normalizeHistory(currentStorage.values
+  let current = normalizeHistory(currentStorage.values
       .map(sanitizeSavedProfile)
       .filter((profile): profile is SavedProfile => profile !== null));
   const legacyStorage = readStoredArray(LEGACY_PROFILE_STORAGE_KEY);
-  if (!legacyStorage.present) return current;
-
-  const migrated = await migrateLegacyProfiles(legacyStorage.values);
-  const merged = mergeSavedProfiles(current, migrated);
-
-  try {
-    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(merged));
-    // v1 contains reversible passwords. Once v2 metadata is durable, never keep
-    // an unencrypted fallback; failed credentials intentionally become empty.
-    localStorage.removeItem(LEGACY_PROFILE_STORAGE_KEY);
-  } catch {
-    // Keep the in-memory migration result and retry cleanup on a later load.
+  if (legacyStorage.present) {
+    const migrated = await migrateLegacyProfiles(legacyStorage.values);
+    current = mergeSavedProfiles(current, migrated);
+    try {
+      localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(current));
+      // v1 contains reversible passwords. Once v2 metadata is durable, never keep
+      // an unencrypted fallback; failed credentials intentionally become empty.
+      localStorage.removeItem(LEGACY_PROFILE_STORAGE_KEY);
+    } catch {
+      // Keep the in-memory migration result and retry cleanup on a later load.
+    }
   }
-  return merged;
+
+  // Cross-device sync: merge in whatever the KV store has, then push the
+  // merged result back so every device converges. Best-effort — a network
+  // failure or missing access password just falls back to local storage.
+  if (accessPasswordCache) {
+    const remoteRaw = await fetchRemoteProfiles(accessPasswordCache);
+    if (remoteRaw) {
+      const remote = normalizeHistory(remoteRaw
+        .map(sanitizeSavedProfile)
+        .filter((profile): profile is SavedProfile => profile !== null));
+      current = mergeSavedProfiles(current, remote);
+      try { localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(current)); } catch { /* Best-effort. */ }
+    }
+    void pushRemoteProfiles(accessPasswordCache, current);
+  }
+
+  return current;
 }
 
 function loadCurrentProfiles(): SavedProfile[] {
@@ -916,6 +932,7 @@ function loadHostKeys(): Record<string, string> {
 function persistProfileSnapshot(): boolean {
   try {
     localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profiles));
+    if (accessPasswordCache) void pushRemoteProfiles(accessPasswordCache, profiles);
     return true;
   } catch {
     return false;
@@ -983,6 +1000,7 @@ async function replaceRememberedHostKey(target: string, fingerprint: string): Pr
       hostKeys = { ...baseHostKeys, [target]: fingerprint };
       if (!persistHostKeys()) throw new Error('Host key persistence failed');
       profiles = updated;
+      if (accessPasswordCache) void pushRemoteProfiles(accessPasswordCache, updated);
       return true;
     } catch {
       hostKeys = baseHostKeys;
