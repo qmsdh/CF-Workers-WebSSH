@@ -50,6 +50,7 @@ export interface Env {
   SSH_SESSIONS: DurableObjectNamespace;
   ASSETS?: Fetcher;
   CONNECT_TIMEOUT_MS?: string;
+  ACCESS_PASSWORD?: string;
 }
 
 export const SSH_MSG_DISCONNECT = 1;

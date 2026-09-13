@@ -9,6 +9,19 @@ function clientAddress(request: Request): string {
   return /^[0-9A-Fa-f:.]{2,64}$/.test(value) ? value.toLowerCase() : 'unknown';
 }
 
+function timingSafeEqual(a: string, b: string): boolean {
+  const encoder = new TextEncoder();
+  const bufA = encoder.encode(a);
+  const bufB = encoder.encode(b);
+  if (bufA.length !== bufB.length) {
+    crypto.getRandomValues(new Uint8Array(1));
+    return false;
+  }
+  let diff = 0;
+  for (let i = 0; i < bufA.length; i++) diff |= bufA[i] ^ bufB[i];
+  return diff === 0;
+}
+
 function hasValidWebSocketOrigin(request: Request): boolean {
   const origin = request.headers.get('Origin');
   return origin === null || origin === new URL(request.url).origin;
@@ -25,7 +38,12 @@ async function sessionTicket(request: Request, env: Env): Promise<Response> {
     body = JSON.parse(text);
   } catch { return jsonError('Invalid JSON body', 400); }
   if (!body || typeof body !== 'object' || Array.isArray(body)) return jsonError('Invalid JSON body', 400);
-  const fields = Object.keys(body as Record<string, unknown>);
+  const raw = body as Record<string, unknown>;
+  if (env.ACCESS_PASSWORD) {
+    const provided = typeof raw.password === 'string' ? raw.password : '';
+    if (!timingSafeEqual(provided, env.ACCESS_PASSWORD)) return jsonError('Invalid access password', 401);
+  }
+  const fields = Object.keys(raw).filter((field) => field !== 'password');
   if (fields.length > 0) return jsonError('Unsupported request field', 400);
   const id = env.SSH_SESSIONS.newUniqueId();
   const stub = env.SSH_SESSIONS.get(id);
