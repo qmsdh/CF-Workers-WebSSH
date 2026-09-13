@@ -1713,11 +1713,26 @@ function failActiveConnection(activeSocket: WebSocket | null, closeReason: strin
   if (activeSocket && activeSocket.readyState < WebSocket.CLOSING) activeSocket.close(CLIENT_CLOSE_SESSION_ERROR, closeReason);
 }
 
+const ACCESS_PASSWORD_STORAGE_KEY = 'workers-webssh.access-password';
+let accessPasswordCache: string | null = null;
+
+async function ensureAccessPassword(): Promise<string> {
+  if (accessPasswordCache !== null) return accessPasswordCache;
+  let stored: string | null = null;
+  try { stored = sessionStorage.getItem(ACCESS_PASSWORD_STORAGE_KEY); } catch { /* Storage can be disabled. */ }
+  if (stored !== null) { accessPasswordCache = stored; return stored; }
+  const input = window.prompt(bilingual('请输入访问密码', 'Enter access password')) ?? '';
+  accessPasswordCache = input;
+  try { sessionStorage.setItem(ACCESS_PASSWORD_STORAGE_KEY, input); } catch { /* Password still works for this session. */ }
+  return input;
+}
+
 async function issueTicket(signal: AbortSignal): Promise<{ ticket: string; sessionId: string }> {
+  const accessPassword = await ensureAccessPassword();
   const response = await fetch('/api/session', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({}),
+    body: JSON.stringify({ password: accessPassword }),
     signal,
   });
   let payload: { ticket?: string; sessionId?: string; error?: string } = {};
@@ -1725,6 +1740,10 @@ async function issueTicket(signal: AbortSignal): Promise<{ ticket: string; sessi
     payload = await response.json() as { ticket?: string; sessionId?: string; error?: string };
   } catch {
     // The HTTP status still gives a useful fallback below.
+  }
+  if (response.status === 401) {
+    accessPasswordCache = null;
+    try { sessionStorage.removeItem(ACCESS_PASSWORD_STORAGE_KEY); } catch { /* Ignore. */ }
   }
   if (!response.ok || !payload.ticket || !payload.sessionId) {
     throw new Error(payload.error
