@@ -56,6 +56,35 @@ async function sessionTicket(request: Request, env: Env): Promise<Response> {
   return secureResponse(Response.json({ ...ticket, sessionId: id.toString() }, { headers: { 'Cache-Control': 'no-store' } }));
 }
 
+const MAX_CONNECTIONS_BLOB_BYTES = 600_000;
+const CONNECTIONS_KV_KEY = 'connections:blob';
+
+async function connectionsHandler(request: Request, env: Env): Promise<Response> {
+  if (!env.CONNECTIONS_KV) return jsonError('Sync storage is not configured', 503);
+  if (!env.ACCESS_PASSWORD) return jsonError('Access password is not configured', 403);
+  const provided = request.headers.get('X-Access-Password') ?? '';
+  if (!timingSafeEqual(provided, env.ACCESS_PASSWORD)) return jsonError('Invalid access password', 401);
+
+  if (request.method === 'GET') {
+    const stored = await env.CONNECTIONS_KV.get(CONNECTIONS_KV_KEY);
+    return secureResponse(Response.json({ blob: stored ?? null }, { headers: { 'Cache-Control': 'no-store' } }));
+  }
+
+  const contentLength = Number(request.headers.get('Content-Length') ?? 0);
+  if (!Number.isFinite(contentLength) || contentLength < 0 || contentLength > MAX_CONNECTIONS_BLOB_BYTES) return jsonError('Request body is too large', 413);
+  let body: unknown;
+  try {
+    const text = await request.text();
+    if (new TextEncoder().encode(text).length > MAX_CONNECTIONS_BLOB_BYTES) return jsonError('Request body is too large', 413);
+    body = JSON.parse(text);
+  } catch { return jsonError('Invalid JSON body', 400); }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return jsonError('Invalid JSON body', 400);
+  const blob = (body as Record<string, unknown>).blob;
+  if (typeof blob !== 'string' || blob.length < 1 || blob.length > MAX_CONNECTIONS_BLOB_BYTES) return jsonError('Invalid sync payload', 400);
+  await env.CONNECTIONS_KV.put(CONNECTIONS_KV_KEY, blob);
+  return secureResponse(Response.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } }));
+}
+
 async function sshUpgrade(request: Request, env: Env): Promise<Response> {
   if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') return jsonError('WebSocket upgrade required', 426);
   const url = new URL(request.url);
@@ -168,6 +197,10 @@ export default {
       if (url.pathname === '/api/processes') {
         if (request.method !== 'GET') return corsResponse(jsonError('Method not allowed', 405));
         return corsResponse(await processUpgrade(request, env));
+      }
+      if (url.pathname === '/api/connections') {
+        if (request.method !== 'GET' && request.method !== 'POST') return corsResponse(jsonError('Method not allowed', 405));
+        return corsResponse(await connectionsHandler(request, env));
       }
       if (isApiRequest) return corsResponse(jsonError('Not found', 404));
       if (!env.ASSETS) return jsonError('Static assets binding is not configured', 503);
