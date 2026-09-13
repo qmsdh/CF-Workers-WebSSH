@@ -51,6 +51,7 @@ export interface Env {
   ASSETS?: Fetcher;
   CONNECT_TIMEOUT_MS?: string;
   ACCESS_PASSWORD?: string;
+  CONNECTIONS_KV?: KVNamespace;
 }
 
 export const SSH_MSG_DISCONNECT = 1;

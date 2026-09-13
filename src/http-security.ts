@@ -21,7 +21,7 @@ export function corsResponse(response: Response): Response {
   const headers = new Headers(response.headers);
   headers.set('Access-Control-Allow-Origin', '*');
   headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  headers.set('Access-Control-Allow-Headers', 'Content-Type');
+  headers.set('Access-Control-Allow-Headers', 'Content-Type, X-Access-Password');
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
