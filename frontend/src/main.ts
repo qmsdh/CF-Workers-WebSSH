@@ -280,6 +280,7 @@ const ui = {
   shareLink: element<HTMLButtonElement>('share-link'),
   languageToggle: element<HTMLButtonElement>('language-toggle'),
   themeToggle: element<HTMLButtonElement>('theme-toggle'),
+  logoutButton: element<HTMLButtonElement>('logout-button'),
   sessionTitle: element<HTMLElement>('session-title'),
   sessionSubtitle: element<HTMLElement>('session-subtitle'),
   liveOrb: element<HTMLElement>('live-orb'),
@@ -1733,16 +1734,98 @@ function failActiveConnection(activeSocket: WebSocket | null, closeReason: strin
 
 const ACCESS_PASSWORD_STORAGE_KEY = 'workers-webssh.access-password';
 let accessPasswordCache: string | null = null;
+let accessPasswordPromise: Promise<string> | null = null;
 
+/** Verifies a candidate password against the server. Never trusts a client-side check alone. */
+async function verifyAccessPassword(password: string): Promise<boolean> {
+  try {
+    const response = await fetch('/api/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Blocks until a server-verified access password is available. Nothing else
+ * (including rendering locally-cached connection history) may run before
+ * this resolves — the login screen, not a dismissible prompt, is what keeps
+ * the rest of the app out of reach.
+ */
 async function ensureAccessPassword(): Promise<string> {
   if (accessPasswordCache !== null) return accessPasswordCache;
-  let stored: string | null = null;
-  try { stored = sessionStorage.getItem(ACCESS_PASSWORD_STORAGE_KEY); } catch { /* Storage can be disabled. */ }
-  if (stored !== null) { accessPasswordCache = stored; return stored; }
-  const input = window.prompt(bilingual('请输入访问密码', 'Enter access password')) ?? '';
-  accessPasswordCache = input;
-  try { sessionStorage.setItem(ACCESS_PASSWORD_STORAGE_KEY, input); } catch { /* Password still works for this session. */ }
-  return input;
+  if (accessPasswordPromise) return accessPasswordPromise;
+  accessPasswordPromise = (async () => {
+    // No ACCESS_PASSWORD configured server-side: preserve anonymous mode,
+    // never show a gate for a password that doesn't exist.
+    if (await verifyAccessPassword('')) {
+      accessPasswordCache = '';
+      return '';
+    }
+
+    let stored: string | null = null;
+    try { stored = sessionStorage.getItem(ACCESS_PASSWORD_STORAGE_KEY); } catch { /* Storage can be disabled. */ }
+    if (stored !== null && await verifyAccessPassword(stored)) {
+      accessPasswordCache = stored;
+      return stored;
+    }
+    try { sessionStorage.removeItem(ACCESS_PASSWORD_STORAGE_KEY); } catch { /* Ignore. */ }
+
+    const gate = element<HTMLElement>('login-gate');
+    const form = element<HTMLFormElement>('login-form');
+    const input = element<HTMLInputElement>('login-password');
+    const errorBox = element<HTMLElement>('login-error');
+    const submitButton = element<HTMLButtonElement>('login-submit');
+
+    gate.hidden = false;
+    requestAnimationFrame(() => input.focus());
+
+    const password = await new Promise<string>((resolve) => {
+      const handleSubmit = (submitEvent: SubmitEvent): void => {
+        submitEvent.preventDefault();
+        const candidate = input.value;
+        errorBox.hidden = true;
+        submitButton.disabled = true;
+        void verifyAccessPassword(candidate).then((ok) => {
+          submitButton.disabled = false;
+          if (ok) {
+            form.removeEventListener('submit', handleSubmit);
+            resolve(candidate);
+            return;
+          }
+          errorBox.textContent = bilingual('密码错误，请重试。', 'Incorrect password. Please try again.');
+          errorBox.hidden = false;
+          input.value = '';
+          input.focus();
+        });
+      };
+      form.addEventListener('submit', handleSubmit);
+    });
+
+    accessPasswordCache = password;
+    try { sessionStorage.setItem(ACCESS_PASSWORD_STORAGE_KEY, password); } catch { /* Password still works for this session. */ }
+    gate.hidden = true;
+    return password;
+  })();
+  return accessPasswordPromise;
+}
+
+/** Clears the cached password and any locally stored copy of it, without reloading. */
+function forgetAccessPassword(): void {
+  accessPasswordCache = null;
+  accessPasswordPromise = null;
+  try { sessionStorage.removeItem(ACCESS_PASSWORD_STORAGE_KEY); } catch { /* Ignore. */ }
+}
+
+/** Logs out: drops any active session, clears the password, and reloads to a clean state. */
+function logout(): void {
+  try { disconnect(bilingual('已退出登录', 'Logged out')); } catch { /* No active session to close. */ }
+  forgetAccessPassword();
+  location.reload();
 }
 
 async function issueTicket(signal: AbortSignal): Promise<{ ticket: string; sessionId: string }> {
@@ -1760,8 +1843,7 @@ async function issueTicket(signal: AbortSignal): Promise<{ ticket: string; sessi
     // The HTTP status still gives a useful fallback below.
   }
   if (response.status === 401) {
-    accessPasswordCache = null;
-    try { sessionStorage.removeItem(ACCESS_PASSWORD_STORAGE_KEY); } catch { /* Ignore. */ }
+    forgetAccessPassword();
   }
   if (!response.ok || !payload.ticket || !payload.sessionId) {
     throw new Error(payload.error
@@ -2332,6 +2414,13 @@ ui.themeToggle.addEventListener('click', () => {
   document.documentElement.dataset.theme = next;
   try { localStorage.setItem(THEME_STORAGE_KEY, next); } catch { /* Theme still applies for this page. */ }
 });
+ui.logoutButton.addEventListener('click', () => {
+  const confirmed = window.confirm(bilingual(
+    '确定要退出登录吗？未同步的更改可能丢失，当前连接也会断开。',
+    'Log out now? Any unsynced changes may be lost, and the current session will disconnect.',
+  ));
+  if (confirmed) logout();
+});
 ui.hostKeyDialog.addEventListener('cancel', (cancelEvent) => {
   cancelEvent.preventDefault();
   ui.hostKeyDialog.close('reject');
@@ -2507,9 +2596,11 @@ async function initialize(): Promise<void> {
   });
 }
 
-void initialize().catch(() => {
-  // History initialization must never make the connection UI unavailable.
-  void ensureAccessPassword();
+void initialize().catch(async () => {
+  // History initialization must never make the connection UI unavailable —
+  // but the password gate still must resolve first; it must never be
+  // skipped just because something else in initialize() failed.
+  await ensureAccessPassword();
   profiles = loadCurrentProfiles();
   applyLanguage(currentLanguage);
   element<HTMLElement>('app').hidden = false;

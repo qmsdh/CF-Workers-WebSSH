@@ -3082,3 +3082,95 @@ button:disabled {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Login gate: blocks the entire app until the access password is verified server-side. */
+.login-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 20% 15%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 45%),
+    var(--bg);
+}
+
+.login-gate[hidden] {
+  display: none !important;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 36px 32px 32px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.login-brand-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 8px;
+  border-radius: 12px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.login-card h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.login-subtitle {
+  margin: 0 0 18px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.login-field {
+  width: 100%;
+  margin-bottom: 4px;
+  text-align: left;
+}
+
+.login-error {
+  width: 100%;
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border));
+  background: var(--danger-dim);
+  color: var(--danger);
+  font-size: 12px;
+  text-align: left;
+}
+
+.login-submit {
+  width: 100%;
+  margin-top: 18px;
+  height: 44px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+.login-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
