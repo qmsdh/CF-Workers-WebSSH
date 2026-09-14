@@ -15,6 +15,21 @@
     <title>Workers WebSSH</title>
   </head>
   <body>
+    <div id="login-gate" class="login-gate">
+      <form id="login-form" class="login-card" autocomplete="off" novalidate>
+        <span class="login-brand-mark" aria-hidden="true">&gt;_</span>
+        <h1 data-i18n-zh="访问受限" data-i18n-en="Access restricted">访问受限</h1>
+        <p class="login-subtitle" data-i18n-zh="请输入访问密码以继续" data-i18n-en="Enter the access password to continue">请输入访问密码以继续</p>
+        <label class="field login-field">
+          <span data-i18n-zh="访问密码" data-i18n-en="Access password">访问密码</span>
+          <input id="login-password" name="password" type="password" required autocomplete="current-password" autofocus />
+        </label>
+        <p id="login-error" class="login-error" role="alert" hidden></p>
+        <button id="login-submit" class="primary-button login-submit" type="submit">
+          <span data-i18n-zh="进入" data-i18n-en="Enter">进入</span>
+        </button>
+      </form>
+    </div>
     <div id="app" hidden>
       <header class="topbar">
         <div class="brand-group">
@@ -55,6 +70,19 @@
             data-i18n-aria-label-en="Toggle color theme"
           >
             <svg class="sun-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42" /></svg>
+          </button>
+          <button
+            id="logout-button"
+            class="icon-button"
+            type="button"
+            aria-label="退出登录"
+            data-i18n-aria-label-zh="退出登录"
+            data-i18n-aria-label-en="Log out"
+            title="退出登录"
+            data-i18n-title-zh="退出登录"
+            data-i18n-title-en="Log out"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" /></svg>
           </button>
           <a
             class="icon-button"
