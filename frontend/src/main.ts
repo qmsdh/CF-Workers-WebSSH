@@ -1733,8 +1733,48 @@ function failActiveConnection(activeSocket: WebSocket | null, closeReason: strin
 }
 
 const ACCESS_PASSWORD_STORAGE_KEY = 'workers-webssh.access-password';
+const REMEMBER_PASSWORD_STORAGE_KEY = 'workers-webssh.access-password-remember';
+const REMEMBER_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 let accessPasswordCache: string | null = null;
 let accessPasswordPromise: Promise<string> | null = null;
+
+interface RememberedPassword {
+  password: string;
+  expiresAt: number;
+}
+
+function isRememberedPassword(value: unknown): value is RememberedPassword {
+  if (!value || typeof value !== 'object') return false;
+  const item = value as Partial<RememberedPassword>;
+  return typeof item.password === 'string' && typeof item.expiresAt === 'number' && Number.isFinite(item.expiresAt);
+}
+
+/** Reads the "remember me" password from localStorage, discarding it if past its 7-day expiry. */
+function loadRememberedPassword(): string | null {
+  try {
+    const raw = localStorage.getItem(REMEMBER_PASSWORD_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRememberedPassword(parsed) || parsed.expiresAt <= Date.now()) {
+      localStorage.removeItem(REMEMBER_PASSWORD_STORAGE_KEY);
+      return null;
+    }
+    return parsed.password;
+  } catch {
+    return null;
+  }
+}
+
+function storeRememberedPassword(password: string): void {
+  try {
+    const entry: RememberedPassword = { password, expiresAt: Date.now() + REMEMBER_DURATION_MS };
+    localStorage.setItem(REMEMBER_PASSWORD_STORAGE_KEY, JSON.stringify(entry));
+  } catch { /* Falls back to session-only persistence. */ }
+}
+
+function clearRememberedPassword(): void {
+  try { localStorage.removeItem(REMEMBER_PASSWORD_STORAGE_KEY); } catch { /* Ignore. */ }
+}
 
 /** Verifies a candidate password against the server. Never trusts a client-side check alone. */
 async function verifyAccessPassword(password: string): Promise<boolean> {
@@ -1767,6 +1807,15 @@ async function ensureAccessPassword(): Promise<string> {
       return '';
     }
 
+    // "Remember me for 7 days" (opt-in, localStorage) is checked before the
+    // tab-scoped sessionStorage copy so a still-valid 7-day grant survives a
+    // full browser restart, not just a page refresh.
+    const remembered = loadRememberedPassword();
+    if (remembered !== null && await verifyAccessPassword(remembered)) {
+      accessPasswordCache = remembered;
+      return remembered;
+    }
+
     let stored: string | null = null;
     try { stored = sessionStorage.getItem(ACCESS_PASSWORD_STORAGE_KEY); } catch { /* Storage can be disabled. */ }
     if (stored !== null && await verifyAccessPassword(stored)) {
@@ -1778,6 +1827,7 @@ async function ensureAccessPassword(): Promise<string> {
     const gate = element<HTMLElement>('login-gate');
     const form = element<HTMLFormElement>('login-form');
     const input = element<HTMLInputElement>('login-password');
+    const rememberCheckbox = element<HTMLInputElement>('login-remember');
     const errorBox = element<HTMLElement>('login-error');
     const submitButton = element<HTMLButtonElement>('login-submit');
 
@@ -1794,6 +1844,8 @@ async function ensureAccessPassword(): Promise<string> {
           submitButton.disabled = false;
           if (ok) {
             form.removeEventListener('submit', handleSubmit);
+            if (rememberCheckbox.checked) storeRememberedPassword(candidate);
+            else clearRememberedPassword();
             resolve(candidate);
             return;
           }
@@ -1814,11 +1866,12 @@ async function ensureAccessPassword(): Promise<string> {
   return accessPasswordPromise;
 }
 
-/** Clears the cached password and any locally stored copy of it, without reloading. */
+/** Clears the cached password and any locally stored copy of it (both the tab-scoped and the 7-day "remember me" copy), without reloading. */
 function forgetAccessPassword(): void {
   accessPasswordCache = null;
   accessPasswordPromise = null;
   try { sessionStorage.removeItem(ACCESS_PASSWORD_STORAGE_KEY); } catch { /* Ignore. */ }
+  clearRememberedPassword();
 }
 
 /** Logs out: drops any active session, clears the password, and reloads to a clean state. */
