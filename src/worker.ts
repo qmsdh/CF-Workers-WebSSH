@@ -56,6 +56,25 @@ async function sessionTicket(request: Request, env: Env): Promise<Response> {
   return secureResponse(Response.json({ ...ticket, sessionId: id.toString() }, { headers: { 'Cache-Control': 'no-store' } }));
 }
 
+async function authHandler(request: Request, env: Env): Promise<Response> {
+  if (!request.headers.get('Content-Type')?.toLowerCase().startsWith('application/json')) return jsonError('Expected application/json', 415);
+  const contentLength = Number(request.headers.get('Content-Length') ?? 0);
+  if (!Number.isFinite(contentLength) || contentLength < 0 || contentLength > 8192) return jsonError('Request body is too large', 413);
+  let body: unknown;
+  try {
+    const text = await request.text();
+    if (new TextEncoder().encode(text).length > 8192) return jsonError('Request body is too large', 413);
+    body = JSON.parse(text);
+  } catch { return jsonError('Invalid JSON body', 400); }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return jsonError('Invalid JSON body', 400);
+  // No ACCESS_PASSWORD configured: preserve the anonymous fallback used
+  // elsewhere (sessionTicket) instead of locking everyone out forever.
+  if (!env.ACCESS_PASSWORD) return secureResponse(Response.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } }));
+  const provided = typeof (body as Record<string, unknown>).password === 'string' ? (body as Record<string, unknown>).password as string : '';
+  if (!timingSafeEqual(provided, env.ACCESS_PASSWORD)) return jsonError('Invalid access password', 401);
+  return secureResponse(Response.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } }));
+}
+
 const MAX_CONNECTIONS_BLOB_BYTES = 600_000;
 const CONNECTIONS_KV_KEY = 'connections:blob';
 
@@ -179,6 +198,10 @@ export default {
       }
       if (url.pathname === '/api/health' && request.method === 'GET') {
         return corsResponse(secureResponse(Response.json({ status: 'ok', runtime: 'cloudflare-workers', ssh: true }, { headers: { 'Cache-Control': 'no-store' } })));
+      }
+      if (url.pathname === '/api/auth') {
+        if (request.method !== 'POST') return corsResponse(jsonError('Method not allowed', 405));
+        return corsResponse(await authHandler(request, env));
       }
       if (url.pathname === '/api/session') {
         if (request.method !== 'POST') return corsResponse(jsonError('Method not allowed', 405));
