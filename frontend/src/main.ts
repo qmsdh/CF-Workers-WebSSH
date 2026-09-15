@@ -1732,8 +1732,8 @@ function failActiveConnection(activeSocket: WebSocket | null, closeReason: strin
   if (activeSocket && activeSocket.readyState < WebSocket.CLOSING) activeSocket.close(CLIENT_CLOSE_SESSION_ERROR, closeReason);
 }
 
-const ACCESS_PASSWORD_STORAGE_KEY = 'workers-webssh.access-password';
-const REMEMBER_PASSWORD_STORAGE_KEY = 'workers-webssh.access-password-remember';
+const ACCESS_PASSWORD_STORAGE_KEY = 'workers-webssh.access-password.v2';
+const REMEMBER_PASSWORD_STORAGE_KEY = 'workers-webssh.access-password-remember.v2';
 const REMEMBER_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 let accessPasswordCache: string | null = null;
 let accessPasswordPromise: Promise<string> | null = null;
@@ -1779,11 +1779,15 @@ function clearRememberedPassword(): void {
 /** Verifies a candidate password against the server. Never trusts a client-side check alone. */
 async function verifyAccessPassword(password: string): Promise<boolean> {
   try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
     const response = await fetch('/api/auth', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ password }),
+      signal: controller.signal,
     });
+    clearTimeout(timer);
     return response.ok;
   } catch {
     return false;
@@ -1807,22 +1811,28 @@ async function ensureAccessPassword(): Promise<string> {
       return '';
     }
 
-    // "Remember me for 7 days" (opt-in, localStorage) is checked before the
-    // tab-scoped sessionStorage copy so a still-valid 7-day grant survives a
-    // full browser restart, not just a page refresh.
-    const remembered = loadRememberedPassword();
-    if (remembered !== null && await verifyAccessPassword(remembered)) {
-      accessPasswordCache = remembered;
-      return remembered;
-    }
+// "Remember me for 7 days" (opt-in, localStorage) is checked before the
+// tab-scoped sessionStorage copy so a still-valid 7-day grant survives a
+// full browser restart, not just a page refresh.
+const remembered = loadRememberedPassword();
+if (remembered !== null) {
+  if (await verifyAccessPassword(remembered)) {
+    accessPasswordCache = remembered;
+    return remembered;
+  }
+  // 记住的密码已失效，清除以免下次刷新继续卡住
+  clearRememberedPassword();
+}
 
-    let stored: string | null = null;
-    try { stored = sessionStorage.getItem(ACCESS_PASSWORD_STORAGE_KEY); } catch { /* Storage can be disabled. */ }
-    if (stored !== null && await verifyAccessPassword(stored)) {
-      accessPasswordCache = stored;
-      return stored;
-    }
-    try { sessionStorage.removeItem(ACCESS_PASSWORD_STORAGE_KEY); } catch { /* Ignore. */ }
+let stored: string | null = null;
+try { stored = sessionStorage.getItem(ACCESS_PASSWORD_STORAGE_KEY); } catch { /* Storage can be disabled. */ }
+if (stored !== null) {
+  if (await verifyAccessPassword(stored)) {
+    accessPasswordCache = stored;
+    return stored;
+  }
+}
+try { sessionStorage.removeItem(ACCESS_PASSWORD_STORAGE_KEY); } catch { /* Ignore. */ }
 
     const gate = element<HTMLElement>('login-gate');
     const form = element<HTMLFormElement>('login-form');
@@ -1835,28 +1845,31 @@ async function ensureAccessPassword(): Promise<string> {
     requestAnimationFrame(() => input.focus());
 
     const password = await new Promise<string>((resolve) => {
-      const handleSubmit = (submitEvent: SubmitEvent): void => {
-        submitEvent.preventDefault();
-        const candidate = input.value;
-        errorBox.hidden = true;
-        submitButton.disabled = true;
-        void verifyAccessPassword(candidate).then((ok) => {
-          submitButton.disabled = false;
-          if (ok) {
-            form.removeEventListener('submit', handleSubmit);
-            if (rememberCheckbox.checked) storeRememberedPassword(candidate);
-            else clearRememberedPassword();
-            resolve(candidate);
-            return;
-          }
-          errorBox.textContent = bilingual('密码错误，请重试。', 'Incorrect password. Please try again.');
-          errorBox.hidden = false;
-          input.value = '';
-          input.focus();
-        });
-      };
-      form.addEventListener('submit', handleSubmit);
-    });
+  const handleSubmit = (submitEvent: SubmitEvent): void => {
+    submitEvent.preventDefault();
+    const candidate = input.value;
+    errorBox.hidden = true;
+    submitButton.disabled = true;
+    void verifyAccessPassword(candidate)
+      .then((ok) => {
+        if (ok) {
+          form.removeEventListener('submit', handleSubmit);
+          if (rememberCheckbox?.checked) storeRememberedPassword(candidate);
+          else clearRememberedPassword();
+          resolve(candidate);
+          return;
+        }
+        errorBox.textContent = bilingual('密码错误，请重试。', 'Incorrect password. Please try again.');
+        errorBox.hidden = false;
+        input.value = '';
+        input.focus();
+      })
+      .finally(() => {
+        submitButton.disabled = false;
+      });
+  };
+  form.addEventListener('submit', handleSubmit);
+});
 
     accessPasswordCache = password;
     try { sessionStorage.setItem(ACCESS_PASSWORD_STORAGE_KEY, password); } catch { /* Password still works for this session. */ }
