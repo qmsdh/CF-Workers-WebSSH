@@ -318,6 +318,7 @@ export class SFTPClient {
   private initializationResolve: ((info: SFTPVersionInfo) => void) | null = null;
   private initializationReject: ((reason: unknown) => void) | null = null;
   private initializationTimer: ReturnType<typeof setTimeout> | null = null;
+  private extensions: ReadonlyMap<string, string> = new Map();
 
   constructor(sendData: SendData, options: SFTPClientOptions = {}) {
     this.sendData = sendData;
@@ -541,6 +542,25 @@ export class SFTPClient {
     ]);
   }
 
+  /** Whether the server advertised support for the given SFTP extension in its VERSION packet. */
+  hasExtension(name: string): boolean {
+    return this.extensions.has(name);
+  }
+
+  /**
+   * Atomic rename that overwrites an existing file at newPath, using the
+   * posix-rename@openssh.com extension. Callers should check hasExtension()
+   * first, since plain SSH_FXP_RENAME fails with SSH_FX_FAILURE if newPath
+   * already exists, and not every server implements this extension.
+   */
+  posixRename(oldPath: string, newPath: string): Promise<void> {
+    return this.statusRequest(SFTP_PACKET_TYPES.EXTENDED, [
+      encodeString('posix-rename@openssh.com', 'extension name'),
+      encodeString(oldPath, 'old path'),
+      encodeString(newPath, 'new path'),
+    ]);
+  }
+
   private request<T>(
     type: number,
     fields: readonly Uint8Array[],
@@ -617,6 +637,7 @@ export class SFTPClient {
     }
     reader.assertEnd('VERSION packet');
     this.state = 'ready';
+    this.extensions = extensions;
     if (this.initializationTimer) clearTimeout(this.initializationTimer);
     this.initializationTimer = null;
     const resolve = this.initializationResolve;
