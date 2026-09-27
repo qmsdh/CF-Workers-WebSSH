@@ -238,7 +238,7 @@ export class SFTPHandler {
       if (upload.received !== upload.size) throw new Error('Upload ended before the declared size was received');
       await this.client.closeHandle(upload.handle);
       upload.handleClosed = true;
-      if (upload.temporary) await this.client.rename(upload.uploadPath, upload.destinationPath);
+      if (upload.temporary) await this.replaceFile(upload.uploadPath, upload.destinationPath);
       this.upload = null;
       this.sendJSON({ type: 'sftp_upload_complete', requestId, path: upload.destinationPath, size: upload.received });
     } catch (error) {
@@ -330,6 +330,22 @@ export class SFTPHandler {
       upload.handleClosed = true;
     }
     if (removePartial) await this.client.removeFile(upload.uploadPath).catch(() => undefined);
+  }
+
+  /**
+   * Renames oldPath onto newPath even when newPath already exists (used to
+   * publish an overwrite upload from its temporary name). Plain SSH_FXP_RENAME
+   * fails with SSH_FX_FAILURE in that case per the SFTPv3 spec, so this prefers
+   * the posix-rename@openssh.com extension when the server advertises it, and
+   * otherwise falls back to removing the destination first.
+   */
+  private async replaceFile(oldPath: string, newPath: string): Promise<void> {
+    if (this.client.hasExtension('posix-rename@openssh.com')) {
+      await this.client.posixRename(oldPath, newPath);
+      return;
+    }
+    await this.client.removeFile(newPath).catch(() => undefined);
+    await this.client.rename(oldPath, newPath);
   }
 
   private assertReady(): void {
